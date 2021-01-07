@@ -22,7 +22,9 @@ from matplotlib import _api
 
 
 QT_API_PYQT5 = "PyQt5"
+QT_API_PYQT6 = "PyQt6"
 QT_API_PYSIDE2 = "PySide2"
+QT_API_PYSIDE6 = "PySide6"
 QT_API_PYQTv2 = "PyQt4v2"
 QT_API_PYSIDE = "PySide"
 QT_API_PYQT = "PyQt4"   # Use the old sip v1 API (Py3 defaults to v2).
@@ -31,11 +33,16 @@ if QT_API_ENV is not None:
     QT_API_ENV = QT_API_ENV.lower()
 # Mapping of QT_API_ENV to requested binding.  ETS does not support PyQt4v1.
 # (https://github.com/enthought/pyface/blob/master/pyface/qt/__init__.py)
-_ETS = {"pyqt5": QT_API_PYQT5, "pyside2": QT_API_PYSIDE2,
+_ETS = {"pyqt6": QT_API_PYQT6, "pyside6": QT_API_PYSIDE6,
+        "pyqt5": QT_API_PYQT5, "pyside2": QT_API_PYSIDE2,
         "pyqt": QT_API_PYQTv2, "pyside": QT_API_PYSIDE,
         None: None}
 # First, check if anything is already imported.
-if "PyQt5.QtCore" in sys.modules:
+if "PyQt6.QtCore" in sys.modules:
+    QT_API = QT_API_PYQT6
+elif "PySide6.QtCore" in sys.modules:
+    QT_API = QT_API_PYSIDE6
+elif "PyQt5.QtCore" in sys.modules:
     QT_API = QT_API_PYQT5
 elif "PySide2.QtCore" in sys.modules:
     QT_API = QT_API_PYSIDE2
@@ -48,6 +55,11 @@ elif "PySide.QtCore" in sys.modules:
 # requested backend actually matches).  Use dict.__getitem__ to avoid
 # triggering backend resolution (which can result in a partially but
 # incompletely imported backend_qt5).
+elif dict.__getitem__(mpl.rcParams, "backend") in ["Qt6Agg", "Qt6Cairo"]:
+    if QT_API_ENV in ["pyqt6", "pyside6"]:
+        QT_API = _ETS[QT_API_ENV]
+    else:
+        QT_API = None
 elif dict.__getitem__(mpl.rcParams, "backend") in ["Qt5Agg", "Qt5Cairo"]:
     if QT_API_ENV in ["pyqt5", "pyside2"]:
         QT_API = _ETS[QT_API_ENV]
@@ -66,10 +78,35 @@ else:
     except KeyError as err:
         raise RuntimeError(
             "The environment variable QT_API has the unrecognized value {!r};"
-            "valid values are 'pyqt5', 'pyside2', 'pyqt', and "
-            "'pyside'") from err
+            "valid values are 'pyqt6', 'pyside6', 'pyqt5', 'pyside2', 'pyqt',"
+            " and 'pyside'") from err
 
 
+def _setup_pyqt6():
+    global QtCore, QtGui, QtWidgets, __version__, is_pyqt6, \
+        _isdeleted, _getSaveFileName
+
+    if QT_API == QT_API_PYQT6:
+        from PyQt6 import QtCore, QtGui, QtWidgets
+        import sip
+        __version__ = QtCore.PYQT_VERSION_STR
+        QtCore.Signal = QtCore.pyqtSignal
+        QtCore.Slot = QtCore.pyqtSlot
+        QtCore.Property = QtCore.pyqtProperty
+        _isdeleted = sip.isdeleted
+    elif QT_API == QT_API_PYSIDE6:
+        from PySide6 import QtCore, QtGui, QtWidgets, __version__
+        import shiboken6
+        def _isdeleted(obj): return not shiboken6.isValid(obj)
+    else:
+        raise ValueError("Unexpected value for the 'backend.qt6' rcparam")
+    _getSaveFileName = QtWidgets.QFileDialog.getSaveFileName
+
+    @_api.deprecated("3.5", alternative="QtCore.qVersion()")
+    def is_pyqt6():
+        return True
+
+      
 def _setup_pyqt5():
     global QtCore, QtGui, QtWidgets, __version__, is_pyqt5, \
         _isdeleted, _getSaveFileName
@@ -151,7 +188,9 @@ def _setup_pyqt4():
         return False
 
 
-if QT_API in [QT_API_PYQT5, QT_API_PYSIDE2]:
+if QT_API in [QT_API_PYQT6, QT_API_PYSIDE6]:
+    _setup_pyqt6()
+elif QT_API in [QT_API_PYQT5, QT_API_PYSIDE2]:
     _setup_pyqt5()
 elif QT_API in [QT_API_PYQTv2, QT_API_PYSIDE, QT_API_PYQT]:
     _setup_pyqt4()
@@ -161,9 +200,21 @@ elif QT_API is None:  # See above re: dict.__getitem__.
                        (_setup_pyqt4, QT_API_PYSIDE),
                        (_setup_pyqt4, QT_API_PYQT),
                        (_setup_pyqt5, QT_API_PYQT5),
-                       (_setup_pyqt5, QT_API_PYSIDE2)]
-    else:
+                       (_setup_pyqt5, QT_API_PYSIDE2),
+                       (_setup_pyqt6, QT_API_PYQT6),
+                       (_setup_pyqt6, QT_API_PYSIDE6)]
+    elif dict.__getitem__(mpl.rcParams, "backend") == "Qt5Agg":
         _candidates = [(_setup_pyqt5, QT_API_PYQT5),
+                       (_setup_pyqt5, QT_API_PYSIDE2),
+                       (_setup_pyqt6, QT_API_PYQT6),
+                       (_setup_pyqt6, QT_API_PYSIDE6)]
+    elif dict.__getitem__(mpl.rcParams, "backend") == "Qt6Agg":
+        _candidates = [(_setup_pyqt6, QT_API_PYQT6),
+                       (_setup_pyqt6, QT_API_PYSIDE6)]
+    else:
+        _candidates = [(_setup_pyqt6, QT_API_PYQT6),
+                       (_setup_pyqt6, QT_API_PYSIDE6)
+                       (_setup_pyqt5, QT_API_PYQT5),
                        (_setup_pyqt5, QT_API_PYSIDE2),
                        (_setup_pyqt4, QT_API_PYQTv2),
                        (_setup_pyqt4, QT_API_PYSIDE),
@@ -182,7 +233,8 @@ else:  # We should not get there.
 
 # These globals are only defined for backcompatibility purposes.
 ETS = dict(pyqt=(QT_API_PYQTv2, 4), pyside=(QT_API_PYSIDE, 4),
-           pyqt5=(QT_API_PYQT5, 5), pyside2=(QT_API_PYSIDE2, 5))
+           pyqt5=(QT_API_PYQT5, 5), pyside2=(QT_API_PYSIDE2, 5)
+           pyqt6=(QT_API_PYQT6, 6), pyside6=(QT_API_PYSIDE6, 6))
 
 QT_RC_MAJOR_VERSION = int(QtCore.qVersion().split(".")[0])
 
